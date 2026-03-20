@@ -62,12 +62,32 @@ class CTModule {
     /// @return The position of the value as uint8_t
     uint8_t getPosForMinute(uint8_t n);
 
+    /// @brief Zero a specific module (move to zero position)
+    /// @param addr - The address of the module to zero
+    void zero(uint8_t addr);
+
+    /// @brief Zero all modules in the given address list
+    /// @param addresses - Array of module addresses
+    /// @param count - Number of addresses in the array
+    void zeroAll(uint8_t* addresses, uint8_t count);
+
+    /// @brief Step a specific module one blade forward
+    /// @param addr - The address of the module to step
+    void step(uint8_t addr);
+
+    /// @brief Read the module type from a specific module
+    /// @param addr - The address of the module to query
+    /// @param type - Pointer to store the resulting module type byte
+    /// @return True when a response byte was received, false on timeout/error
+    bool getType(uint8_t addr, uint8_t* type);
+
   private:
     KMP_RS485* rs485;
 
     void sendToModule(uint8_t cmd, uint8_t addr);
     void sendToModule(uint8_t cmd, uint8_t addr, uint8_t arg1);
     void sendToModule(uint8_t cmd, uint8_t addr, uint8_t arg1, uint8_t arg2);
+    int waitForResponseByte(unsigned long timeoutMs);
     void sendModuleStart(uint8_t cmd, uint8_t addr);
     void sendModuleEnd();
 };

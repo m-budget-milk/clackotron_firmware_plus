@@ -4,8 +4,9 @@
 #include "ct_logging.h"
 #include "config.h"
 
-void CTWebServerAsync::setup(CTModule* module) {
+void CTWebServerAsync::setup(CTModule* module, uint8_t* moduleAddresses) {
     this->module = module;
+    this->moduleAddresses = moduleAddresses;
 
     if (this->server != nullptr) return;
 
@@ -16,6 +17,7 @@ void CTWebServerAsync::setup(CTModule* module) {
     this->createEditGetRoute();
     this->createEditPostRoute();
     this->createReprogramRoute();
+    this->createZeroRoute();
     this->createCatchallRoute();
 
     this->server->begin();
@@ -119,6 +121,37 @@ void CTWebServerAsync::createReprogramRoute() {
         this->module->changeAddress((uint8_t)fromAddr.toInt(), (uint8_t)toAddr.toInt());
 
         request->send(200, "text/text", "Rewrote module address from " + fromAddr + " to " + toAddr + ".\n");
+    });
+}
+
+void CTWebServerAsync::createZeroRoute() {
+    this->server->on("/zero", HTTP_GET, [this](AsyncWebServerRequest *request){
+        if (this->module == nullptr) {
+            request->send(500, "text/plain", "Internal module is not set");
+            return;
+        }
+
+        if (request->hasParam("addr")) {
+            // Zero a specific module
+            String addr = request->getParam("addr")->value();
+            uint8_t moduleAddr = (uint8_t)addr.toInt();
+            
+            CTLog::info("webserver: zeroing module " + String(moduleAddr, HEX));
+            this->module->zero(moduleAddr);
+            
+            request->send(200, "text/plain", "Zeroed module " + addr + "\n");
+        } else {
+            // Zero all modules
+            if (this->moduleAddresses == nullptr) {
+                request->send(500, "text/plain", "Module addresses not set");
+                return;
+            }
+
+            CTLog::info("webserver: zeroing all modules");
+            this->module->zeroAll(this->moduleAddresses, MAX_CONNECTED_MODULES);
+            
+            request->send(200, "text/plain", "Zeroed all modules\n");
+        }
     });
 }
 

@@ -27,10 +27,12 @@
 #define MODULE_CONFIG_FILE_PATH "/config/modules.json"
 #define TIMEZONE_CONFIG_FILE_PATH "/config/timezone.json"
 #define WEBINTERFACE_CONFIG_FILE_PATH "/config/webinterface.json"
+#define BOARD_MODULES_CONFIG_FILE_PATH "/config/board_modules.json"
 
 #define MODULE_CONFIG_BKP_PATH "/config/modules.json.bkp"
 #define TIMEZONE_CONFIG_BKP_PATH "/config/timezone.json.bkp"
 #define WEBINTERFACE_CONFIG_BKP_PATH "/config/webinterface.json.bkp"
+#define BOARD_MODULES_CONFIG_BKP_PATH "/config/board_modules.json.bkp"
 
 // Configuration of the WiFi manager
 #define WIFI_CONNECT_TIMEOUT 15 // s

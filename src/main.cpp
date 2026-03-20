@@ -56,8 +56,8 @@ unsigned long buttonTwoPressedFor = 0;
 // Internal cache of last module output for de-duplication
 uint8_t lastModuleOutputs[MAX_CONNECTED_MODULES] = {' '};
 
-// Internal cache for configuration
-String configTemplate = "";
+// Internal cache for board positions
+uint8_t boardPositions[MAX_CONNECTED_MODULES] = {0};
 bool needsToLoadConfig = true;
 
 // Internal cache whether or not WiFi is connected
@@ -79,6 +79,9 @@ void setup() {
     // Set up our own preferences provider
     preferences.setup();
 
+    // Load board module definitions from filesystem
+    preferences.loadBoardModules();
+
     // Set LED to yellow while booting
     peripherals.setLEDColor(CTLedColor::Yellow);
 
@@ -92,16 +95,12 @@ void setup() {
     // If this is the first boot, write WIFI to modules
     // If not, load time from RTC since we assume we've been connected once.
     if (preferences.isFirstBoot()) {
-        CTLog::info("main: first boot detected, writing 'wifi' to modules");
-        configTemplate = "WIFI";
-
-        for (int i = 0; i < 4; i++) {
-            if (MAX_CONNECTED_MODULES > i && moduleAddresses[i] != 0x00) {
-                module.writeChar(moduleAddresses[i], configTemplate.charAt(i));
-            }
+        CTLog::info("main: first boot detected, writing default positions to modules");
+        int boardCount = preferences.getBoardModuleCount();
+        for (int i = 0; i < boardCount; i++) {
+            uint8_t addr = preferences.getBoardModuleAddress(i);
+            module.writeRaw(addr, (uint8_t)preferences.getBoardDefaultPosition(addr));
         }
-
-        // Do not overwrite the written 'wifi' with the default config
         needsToLoadConfig = false;
     } else {
         // Load time from RTC once in the beginning
@@ -129,7 +128,7 @@ void setup() {
     });
 
     // Set up webserver to allow user to configure modules
-    webserver.setup(&preferences, &needsToLoadConfig);
+    webserver.setup(&preferences, &module, moduleAddresses, &needsToLoadConfig);
 
     CTLog::info("main: clackotron2000 setup complete");
 }
@@ -189,155 +188,29 @@ void loop() {
         lastLoopTime = currentLoopTime;
 
         if (needsToLoadConfig) {
-            configTemplate = preferences.getConfigTemplate();
-            CTLog::info("main: loaded config template: " + configTemplate);
-
+            int boardCount = preferences.getBoardModuleCount();
+            for (int i = 0; i < boardCount; i++) {
+                uint8_t addr = preferences.getBoardModuleAddress(i);
+                boardPositions[i] = (uint8_t)preferences.getBoardSavedPosition(addr);
+                lastModuleOutputs[i] = 0xFF; // Force update on next output cycle
+            }
+            CTLog::info("main: loaded board positions");
             needsToLoadConfig = false;
         }
 
-        // Get the current timestamp in the configured timezone
-        uint32_t timestamp = now();
 
-        // Generate output with current values
-        uint8_t moduleOutputs[MAX_CONNECTED_MODULES];
-        for (int i = 0; i < MAX_CONNECTED_MODULES; i++) moduleOutputs[i] = 0x27; // ' ' (space)
-
-        bool capturing = false;
-        unsigned int iOutput = 0;
-        unsigned int iInput = 0;
-        String captureBuffer = "";
-        String outputBuffer = "";
-
-        do {
-            char c = configTemplate.charAt(iInput);
-
-            if (capturing) {
-                if (c == '}') {
-                    if (captureBuffer.indexOf(':') == -1) {
-                        // Support for generic templates for alphanumeric modules
-                        // These can display all possible values but across multiple modules
-                        String toInsert = "";
-
-                        if (captureBuffer == "YYYY") toInsert = String(year(timestamp));
-                        if (captureBuffer == "MM") toInsert = String(month(timestamp));
-                        if (captureBuffer == "DD") toInsert = String(day(timestamp));
-                        if (captureBuffer == "WD") toInsert = String(dayNamesShort[weekday(timestamp)]);
-                        if (captureBuffer == "WDD") toInsert = String(dayNamesLong[weekday(timestamp)]);
-                        if (captureBuffer == "hh") toInsert = String(hour(timestamp));
-                        if (captureBuffer == "mm") toInsert = String(minute(timestamp));
-                        if (captureBuffer == "ss") toInsert = String(second(timestamp));
-                        if (toInsert.length() == 1) toInsert = "0" + toInsert;
-                    
-                        for (int i = 0; i < toInsert.length(); i++) {
-                            moduleOutputs[iOutput] = module.getPosForChar(toInsert.charAt(i));
-                            outputBuffer += toInsert.charAt(i);
-                            iOutput++;
-                        }
-
-                        // Support for showing some template values on the hour module
-                        // Not all of these can be properly displayed on the hour module
-                        int hourValue = -1;
-                        if (captureBuffer == "YY_h") hourValue = year(timestamp) - 2000;
-                        if (captureBuffer == "MM_h") hourValue = month(timestamp);
-                        if (captureBuffer == "DD_h") hourValue = day(timestamp);
-                        if (captureBuffer == "hh_h") hourValue = hour(timestamp);
-                        if (captureBuffer == "mm_h") hourValue = minute(timestamp);
-                        if (captureBuffer == "ss_h") hourValue = second(timestamp);
-
-                        if (hourValue != -1) {
-                            if (module.canShowHour(hourValue)) {
-                                moduleOutputs[iOutput] = module.getPosForHour(hourValue);
-                                outputBuffer += "#";
-                            } else {
-                                moduleOutputs[iOutput] = 0x18; // ' ' on hour module
-                                outputBuffer += " ";
-                            }
-
-                            iOutput++;
-                        }
-
-                        // Support for showing some template values on the minute module
-                        // Not all of these can be properly displayed on the minute module
-                        int minuteValue = -1;
-                        if (captureBuffer == "YY_m") minuteValue = year(timestamp) - 2000;
-                        if (captureBuffer == "MM_m") minuteValue = month(timestamp);
-                        if (captureBuffer == "DD_m") minuteValue = day(timestamp);
-                        if (captureBuffer == "hh_m") minuteValue = hour(timestamp);
-                        if (captureBuffer == "mm_m") minuteValue = minute(timestamp);
-                        if (captureBuffer == "ss_m") minuteValue = second(timestamp);
-
-                        if (minuteValue != -1) {
-                            if (module.canShowMinute(minuteValue)) {
-                                moduleOutputs[iOutput] = module.getPosForMinute(minuteValue);
-                                outputBuffer += "#";
-                            } else {
-                                moduleOutputs[iOutput] = 0x1D; // ' ' on minute module
-                                outputBuffer += " ";
-                            }
-
-                            iOutput++;
-                        }
-                    } else {
-                        String sizeInfo = captureBuffer.substring(captureBuffer.indexOf(':') + 1);
-                        int sizeData = sizeInfo.toInt();
-
-                        if (sizeData > 0 && captureBuffer.charAt(0) == 't') {
-                            String value = preferences.getConfigTextParam(captureBuffer);
-
-                            if (value != NULL) {
-                                for (int i = 0; i < sizeData; i++) {
-                                    if (i < value.length()) {
-                                        moduleOutputs[iOutput] = module.getPosForChar(value.charAt(i));
-                                        outputBuffer += value.charAt(i);
-                                    } else {
-                                        moduleOutputs[iOutput] = 0x27;
-                                        outputBuffer += " ";
-                                    }
-                                    iOutput++;
-                                }
-                            }
-                        }
-
-                        if (sizeData > 0 && captureBuffer.charAt(0) == 'i') {
-                            uint32_t value = preferences.getConfigNumberParam(captureBuffer);
-
-                            for (int i = 0; i < sizeData; i++) {
-                                moduleOutputs[iOutput] = value;
-                                outputBuffer += "#";
-                                iOutput++;
-                            }
-                        }
-                    }
-
-                    captureBuffer = "";
-                    capturing = false;
-                } else {
-                    captureBuffer += c;
-                }
-            } else {
-                if (c == '{') {
-                    capturing = true;
-                } else {
-                    moduleOutputs[iOutput] = module.getPosForChar(c);
-                    outputBuffer += c;
-                    iOutput++;
-                }
-            }
-
-            iInput++;
-        } while (iInput < configTemplate.length());
-
-        // Write output to modules (if changed)
+        // Write board positions to modules (only when changed)
         int numChanged = 0;
-        for (int i = 0; i < MAX_CONNECTED_MODULES; i++) {
-            if (moduleAddresses[i] != 0x00 && moduleOutputs[i] != lastModuleOutputs[i]) {
-                module.writeRaw(moduleAddresses[i], moduleOutputs[i]);
-                lastModuleOutputs[i] = moduleOutputs[i];
+        int boardCount = preferences.getBoardModuleCount();
+        for (int i = 0; i < boardCount; i++) {
+            uint8_t addr = preferences.getBoardModuleAddress(i);
+            if (boardPositions[i] != lastModuleOutputs[i]) {
+                module.writeRaw(addr, boardPositions[i]);
+                lastModuleOutputs[i] = boardPositions[i];
                 numChanged++;
             }
         }
-
-        if (numChanged > 0) CTLog::info("main: wrote template output: " + outputBuffer);
+        if (numChanged > 0) CTLog::info("main: wrote board positions, " + String(numChanged) + " changed");
 
         // Check button press states and increment loop counter
         if (peripherals.isButtonOnePressed()) buttonOnePressedFor++;
@@ -348,7 +221,7 @@ void loop() {
             CTLog::info("main: button one pressed for " + String(buttonOnePressedFor) + " cycles, activating additional functions");
             peripherals.setLEDColor(CTLedColor::Blue);
             
-            webserverAsync.setup(&module);
+            webserverAsync.setup(&module, moduleAddresses);
 
             buttonOnePressedFor = 0;
         }
@@ -370,7 +243,7 @@ void loop() {
         if (IDEAL_TICK_TIME * loopCount > RTC_UNDRIFT_INTERVAL) {
             CTLog::info("main: correcting rtc drift by re-reading time from rtc");
             uint32_t timstamp = rtc.readTimeFromRTC();
-            setTime(timestamp);
+            setTime(timstamp);
 
             loopCount = 0;
         }

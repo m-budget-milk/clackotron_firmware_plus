@@ -9,15 +9,17 @@
 class CTWebServerAsync {
     public:
         /// @brief Set up the webserver and OTA endpoints
-        void setup(CTModule* module);
+        void setup(CTModule* module, uint8_t* moduleAddresses);
 
     private:
         AsyncWebServer* server;
         CTModule* module;
+        uint8_t* moduleAddresses;
 
         void createEditGetRoute();
         void createEditPostRoute();
         void createReprogramRoute();
+        void createZeroRoute();
         void createCatchallRoute();
 };
 

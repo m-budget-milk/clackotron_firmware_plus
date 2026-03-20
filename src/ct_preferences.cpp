@@ -36,6 +36,10 @@ bool CTPreferences::setup() {
         this->copyLittleFsFile(WEBINTERFACE_CONFIG_FILE_PATH, WEBINTERFACE_CONFIG_BKP_PATH);
     }
 
+    if (!LittleFS.exists(BOARD_MODULES_CONFIG_BKP_PATH)) {
+        this->copyLittleFsFile(BOARD_MODULES_CONFIG_FILE_PATH, BOARD_MODULES_CONFIG_BKP_PATH);
+    }
+
     return true;
 }
 
@@ -76,8 +80,44 @@ void CTPreferences::loadModuleAddresses(uint8_t *moduleAddresses) {
         String dbg = "preferences: found module row with addresses: ";
 
         for (size_t j = 0; j < row.size(); j++) {
-            int intValue = row[j].as<int>();
-            moduleAddresses[moduleCount++] = intValue;
+            int intValue = -1;
+
+            if (row[j].is<int>()) {
+                intValue = row[j].as<int>();
+            } else if (row[j].is<const char*>()) {
+                String token = String(row[j].as<const char*>());
+                token.trim();
+
+                if (token.equalsIgnoreCase("X")) {
+                    dbg += " X";
+                    continue;
+                }
+
+                bool isNumber = token.length() > 0;
+                for (size_t k = 0; k < token.length(); k++) {
+                    char c = token.charAt(k);
+                    if (c < '0' || c > '9') {
+                        isNumber = false;
+                        break;
+                    }
+                }
+
+                if (isNumber) {
+                    intValue = token.toInt();
+                }
+            }
+
+            if (intValue <= 0 || intValue > 255) {
+                dbg += " ?";
+                continue;
+            }
+
+            if (moduleCount >= MAX_CONNECTED_MODULES) {
+                CTLog::error("preferences: module address list exceeds MAX_CONNECTED_MODULES");
+                break;
+            }
+
+            moduleAddresses[moduleCount++] = (uint8_t)intValue;
             dbg += " " + String(intValue);
         }
 
@@ -225,6 +265,129 @@ void CTPreferences::overrideTimeChangeRule(const char* tag, TimeChangeRule *rule
     dbg += " offset=" + String((int)data[4]);
 
     CTLog::debug("preferences: loaded " + String(tag) + " time data: " + dbg);
+}
+
+
+bool CTPreferences::loadBoardModules() {
+    if (this->boardModulesDoc != nullptr) {
+        delete this->boardModulesDoc;
+    }
+
+    File file = LittleFS.open(BOARD_MODULES_CONFIG_FILE_PATH, "r");
+    if (!file) {
+        CTLog::error("preferences: failed to open board modules config file");
+        this->boardModulesDoc = nullptr;
+        return false;
+    }
+
+    size_t fileSize = file.size();
+    size_t capacity = fileSize * 2;
+    if (capacity < 8192) {
+        capacity = 8192;
+    }
+
+    this->boardModulesDoc = new DynamicJsonDocument(capacity);
+
+    DeserializationError error = deserializeJson(*this->boardModulesDoc, file);
+    file.close();
+    if (error) {
+        CTLog::error(
+            "preferences: failed to parse board modules config file: " +
+            String(error.c_str()) +
+            " (size=" + String((unsigned int)fileSize) + ", capacity=" + String((unsigned int)capacity) + ")"
+        );
+        delete this->boardModulesDoc;
+        this->boardModulesDoc = nullptr;
+        return false;
+    }
+
+    CTLog::info("preferences: loaded board modules with " + String(this->getBoardModuleCount()) + " modules");
+    return true;
+}
+
+int CTPreferences::getBoardModuleCount() {
+    if (this->boardModulesDoc == nullptr) return 0;
+    return (*this->boardModulesDoc)["modules"].size();
+}
+
+uint8_t CTPreferences::getBoardModuleAddress(int i) {
+    if (this->boardModulesDoc == nullptr) return 0;
+    return (*this->boardModulesDoc)["modules"][i]["address"].as<uint8_t>();
+}
+
+bool CTPreferences::isValidBoardAddress(uint8_t addr) {
+    if (this->boardModulesDoc == nullptr) return false;
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        if (mod["address"].as<uint8_t>() == addr) return true;
+    }
+    return false;
+}
+
+bool CTPreferences::isValidBoardPosition(uint8_t addr, int pos) {
+    if (this->boardModulesDoc == nullptr) return false;
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        if (mod["address"].as<uint8_t>() == addr) {
+            return pos >= 0 && pos < (int)mod["positions"].size();
+        }
+    }
+    return false;
+}
+
+int CTPreferences::getBoardDefaultPosition(uint8_t addr) {
+    if (this->boardModulesDoc == nullptr) return 0;
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        if (mod["address"].as<uint8_t>() == addr) {
+            return mod["defaultPosition"] | 0;
+        }
+    }
+    return 0;
+}
+
+int CTPreferences::getBoardSavedPosition(uint8_t addr) {
+    if (!this->preferences.isKey("boardPos")) {
+        return this->getBoardDefaultPosition(addr);
+    }
+
+    String saved = this->preferences.getString("boardPos", "{}");
+    DynamicJsonDocument doc(256);
+    DeserializationError error = deserializeJson(doc, saved);
+    String addrStr = String(addr);
+    if (!error && doc.containsKey(addrStr)) {
+        return doc[addrStr].as<int>();
+    }
+    return this->getBoardDefaultPosition(addr);
+}
+
+void CTPreferences::setBoardPositions(String json) {
+    this->preferences.putString("boardPos", json);
+}
+
+String CTPreferences::getBoardPositionsJson() {
+    if (this->boardModulesDoc == nullptr) return "{\"modulePositions\":{}}";
+
+    DynamicJsonDocument savedDoc(256);
+    if (this->preferences.isKey("boardPos")) {
+        String saved = this->preferences.getString("boardPos", "{}");
+        deserializeJson(savedDoc, saved);
+    }
+
+    DynamicJsonDocument result(512);
+    JsonObject positions = result.createNestedObject("modulePositions");
+
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        uint8_t addr = mod["address"].as<uint8_t>();
+        String addrStr = String(addr);
+        int pos = savedDoc.containsKey(addrStr) ? savedDoc[addrStr].as<int>() : (mod["defaultPosition"] | 0);
+        positions[addrStr] = pos;
+    }
+
+    String output;
+    serializeJson(result, output);
+    return output;
 }
 
 void CTPreferences::copyLittleFsFile(const char* src, const char* dst) {

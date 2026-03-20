@@ -62,11 +62,54 @@ class CTPreferences {
     /// @param config - The config JSON object as string
     void setConfig(String config);
 
+    /// @brief Load board module definitions from board_modules.json into memory
+    /// @return True if loaded successfully
+    bool loadBoardModules();
+
+    /// @brief Get the number of board modules defined in board_modules.json
+    /// @return Number of modules
+    int getBoardModuleCount();
+
+    /// @brief Get the RS485 address of board module at index i
+    /// @param i - Index into the modules array
+    /// @return RS485 address byte
+    uint8_t getBoardModuleAddress(int i);
+
+    /// @brief Check whether an address exists in board_modules.json
+    /// @param addr - RS485 address to check
+    /// @return True if address is configured
+    bool isValidBoardAddress(uint8_t addr);
+
+    /// @brief Check whether a position index is valid for the given address
+    /// @param addr - RS485 address
+    /// @param pos - Position index to validate
+    /// @return True if position is within the positions array bounds
+    bool isValidBoardPosition(uint8_t addr, int pos);
+
+    /// @brief Get the default blade position for a board module
+    /// @param addr - RS485 address
+    /// @return defaultPosition from board_modules.json, or 0 if not set
+    int getBoardDefaultPosition(uint8_t addr);
+
+    /// @brief Get the currently saved blade position for a board module
+    /// @param addr - RS485 address
+    /// @return Saved position, or getBoardDefaultPosition if not saved
+    int getBoardSavedPosition(uint8_t addr);
+
+    /// @brief Persist a new set of board positions
+    /// @param json - JSON object string keyed by address, e.g. {"7":14}
+    void setBoardPositions(String json);
+
+    /// @brief Build the full board positions response with fallback resolution
+    /// @return JSON string e.g. {"modulePositions":{"7":14}}
+    String getBoardPositionsJson();
+
     /// @brief Clear all preferences
     void clear();
 
   private:
     Preferences preferences;
+    DynamicJsonDocument* boardModulesDoc = nullptr;
 
     void overrideTimeChangeRule(const char* tag, TimeChangeRule *rule, JsonArray data);
     void copyLittleFsFile(const char* src, const char* dst);

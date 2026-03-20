@@ -36,6 +36,51 @@ void CTModule::changeAddress(uint8_t oldAddr, uint8_t newAddr) {
     this->sendToModule(0xCE, oldAddr, newAddr);
 }
 
+void CTModule::zero(uint8_t addr) {
+    this->sendToModule(0xC5, addr);
+}
+
+void CTModule::zeroAll(uint8_t* addresses, uint8_t count) {
+    if (addresses == nullptr || count == 0) {
+        CTLog::info("module: zeroAll called with empty address list");
+        return;
+    }
+    
+    CTLog::info("module: zeroing all modules");
+    for (uint8_t i = 0; i < count; i++) {
+        if (addresses[i] != 0x00) {
+            this->zero(addresses[i]);
+            delay(100); // Small delay between commands
+        }
+    }
+    CTLog::info("module: finished zeroing all modules");
+}
+
+void CTModule::step(uint8_t addr) {
+    this->sendToModule(0xC6, addr);
+}
+
+bool CTModule::getType(uint8_t addr, uint8_t* type) {
+    if (this->rs485 == nullptr || type == nullptr) return false;
+
+    // Drain stale bytes before issuing a new request.
+    while (this->rs485->available() > 0) {
+        this->rs485->read();
+    }
+
+    this->sendToModule(0xDD, addr);
+
+    int response = this->waitForResponseByte(200);
+    if (response < 0) {
+        CTLog::error("module: failed to read type from module " + String(addr, HEX));
+        return false;
+    }
+
+    *type = (uint8_t)response;
+    CTLog::info("module: module " + String(addr, HEX) + " type = 0x" + String(*type, HEX));
+    return true;
+}
+
 // Check if module can show a character and get the position of the character
 // if possible. The char to blade mapping is based on the following table:
 // https://github.com/adfinis/sbb-fallblatt/blob/master/doc/char_mapping.md#alphanummeric
@@ -120,6 +165,17 @@ void CTModule::sendToModule(uint8_t cmd, uint8_t addr, uint8_t arg1, uint8_t arg
     this->rs485->write(arg2);
     this->rs485->flush();
     this->sendModuleEnd();
+}
+
+int CTModule::waitForResponseByte(unsigned long timeoutMs) {
+    unsigned long start = millis();
+    while ((millis() - start) < timeoutMs) {
+        if (this->rs485->available() > 0) {
+            return this->rs485->read();
+        }
+        delay(1);
+    }
+    return -1;
 }
 
 void CTModule::sendModuleStart(uint8_t cmd, uint8_t addr) {
