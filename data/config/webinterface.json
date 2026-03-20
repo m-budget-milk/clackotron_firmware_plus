@@ -1,5 +1,5 @@
 {
-  "name": "Clackotron 2000",
+  "name": "Clackotron 2020",
   "version": "1.0.0",
   "revision": "debug",
   "expert": true,
@@ -44,7 +44,7 @@
     "expert-template": "Expert template",
     "save-button": "Save configuration",
     "save-failed": "Failed to save config",
-    "copyright": "Rietliau Clackotron 2000",
+    "copyright": "based on Rietliau Clackotron 2000",
     "day-names-short": ["SO", "MO", "DI", "MI", "DO", "FR", "SA"],
     "day-names-long": ["SON", "MON", "DIE", "MIT", "DON", "FRE", "SAM"]
   }
