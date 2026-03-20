@@ -231,7 +231,6 @@
                 <tr>
                   <th>Addr</th>
                   <th>Label</th>
-                  <th>Type</th>
                   <th>Selection</th>
                 </tr>
               </thead>
@@ -240,7 +239,6 @@
                   <tr>
                     <td>{row.address}</td>
                     <td>{row.label}</td>
-                    <td>{row.baseType}</td>
                     <td>
                       <select
                         value={selectedPositions[String(row.address)] ?? row.selectedPosition}
