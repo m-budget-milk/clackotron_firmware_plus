@@ -231,10 +231,8 @@
                 <tr>
                   <th>Addr</th>
                   <th>Label</th>
-                  <th>Len</th>
                   <th>Type</th>
                   <th>Selection</th>
-                  <th>Preview</th>
                 </tr>
               </thead>
               <tbody>
@@ -242,7 +240,6 @@
                   <tr>
                     <td>{row.address}</td>
                     <td>{row.label}</td>
-                    <td>{row.length}</td>
                     <td>{row.baseType}</td>
                     <td>
                       <select
@@ -258,9 +255,6 @@
                           <option value={i}>{i}{pos.label ? ': ' + pos.label : ''}</option>
                         {/each}
                       </select>
-                    </td>
-                    <td class="preview-cell">
-                      {row.positions[selectedPositions[String(row.address)] ?? row.selectedPosition]?.label ?? ''}
                     </td>
                   </tr>
                 {/each}
@@ -429,11 +423,6 @@
     font-size: 0.9rem;
     width: 100%;
     min-width: 160px;
-  }
-
-  .preview-cell {
-    font-weight: 600;
-    color: #2d327d;
   }
 
   .track-heading {
