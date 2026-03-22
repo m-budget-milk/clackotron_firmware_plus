@@ -10,8 +10,12 @@
   let activePage = "config";
   let zeroAddress = "";
   let stepAddress = "";
+  let stepResult = null;
   let typeAddress = "";
   let typeResult = null;
+  let oldAddrChange = "";
+  let newAddrChange = "";
+  let addrResult = null;
   let saveStatus = null;
   let selectedPositions = {};
 
@@ -126,6 +130,8 @@
       return;
     }
 
+    stepResult = null;
+
     try {
       const response = await fetch(`/step?addr=${addr}`);
       if (!response.ok) {
@@ -133,7 +139,7 @@
         return;
       }
       await response.text();
-      alert(`Stepped module ${addr}`);
+      stepResult = { addr };
     } catch (error) {
       console.error("Error stepping module:", error);
       alert("Error stepping module");
@@ -168,6 +174,45 @@
     } catch (error) {
       console.error("Error reading module type:", error);
       alert("Error reading module type");
+    }
+  };
+
+  const changeModuleAddr = async () => {
+    const oldAddr = Number.parseInt(oldAddrChange, 10);
+    const newAddr = Number.parseInt(newAddrChange, 10);
+    if (Number.isNaN(oldAddr) || oldAddr < 1 || oldAddr > 255) {
+      alert("Please enter a valid old address (1-255)");
+      return;
+    }
+    if (Number.isNaN(newAddr) || newAddr < 1 || newAddr > 255) {
+      alert("Please enter a valid new address (1-255)");
+      return;
+    }
+
+    addrResult = null;
+
+    try {
+      const response = await fetch(`/addr?oldAddr=${oldAddr}&newAddr=${newAddr}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Failed to change module address:", errText);
+        alert("Failed to change module address");
+        return;
+      }
+
+      const data = await response.json();
+      if (!data.success) {
+        alert("Failed to change module address");
+        return;
+      }
+
+      addrResult = data;
+      alert(`Successfully changed module address from ${oldAddr} to ${newAddr}`);
+      oldAddrChange = "";
+      newAddrChange = "";
+    } catch (error) {
+      console.error("Error changing module address:", error);
+      alert("Error changing module address");
     }
   };
 
@@ -317,6 +362,11 @@
               />
               <button on:click={stepModule}>Run Step</button>
             </div>
+            {#if stepResult}
+              <p class="debug-result">
+                Stepped module {stepResult.addr}
+              </p>
+            {/if}
           </div>
 
           <div class="debug-option">
@@ -338,6 +388,36 @@
             {#if typeResult}
               <p class="debug-result">
                 Module {typeResult.addr}: {typeResult.typeName} ({typeResult.typeHex})
+              </p>
+            {/if}
+          </div>
+
+          <div class="debug-option">
+            <h3>Change Module Address</h3>
+            <p>
+              Changes the RS485 address of a module. Useful when reconfiguring
+              the board or replacing modules.
+            </p>
+            <div class="debug-controls">
+              <input
+                type="number"
+                min="1"
+                max="255"
+                bind:value={oldAddrChange}
+                placeholder="Old address"
+              />
+              <input
+                type="number"
+                min="1"
+                max="255"
+                bind:value={newAddrChange}
+                placeholder="New address"
+              />
+              <button on:click={changeModuleAddr}>Change Address</button>
+            </div>
+            {#if addrResult}
+              <p class="debug-result">
+                Changed module address from {addrResult.oldAddr} to {addrResult.newAddr}
               </p>
             {/if}
           </div>

@@ -12,7 +12,6 @@ export const boardRows = derived(
       address: mod.address,
       track: mod.track ?? 'Ungrouped',
       label: mod.label,
-      baseType: mod.baseType,
       length: Math.max(1, Number(mod.length ?? 1) || 1),
       positions: mod.positions,
       defaultPosition: mod.defaultPosition ?? 0,

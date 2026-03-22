@@ -54,6 +54,7 @@ void CTWebserver::setup(CTPreferences* preferences, CTModule* module, uint8_t* m
     this->createZeroRoute();
     this->createStepRoute();
     this->createTypeRoute();
+    this->createAddrRoute();
 
     this->server->begin();
 }
@@ -261,8 +262,9 @@ void CTWebserver::createTypeRoute() {
         }
 
         String typeName = "Unknown";
-        if (moduleType == 0x01) typeName = "Hour/Alphanumeric";
-        if (moduleType == 0x02) typeName = "Minute";
+            if (moduleType == 0x01) typeName = "40 Blades";
+            if (moduleType == 0x02) typeName = "62 Blades";
+            if (moduleType == 0x42) typeName = "62 Blades";
 
         String response = "{\"success\":true,\"addr\":" + String(moduleAddr);
         response += ",\"type\":" + String(moduleType);
@@ -273,3 +275,42 @@ void CTWebserver::createTypeRoute() {
         this->server->send(200, "application/json", response);
     });
 }
+
+void CTWebserver::createAddrRoute() {
+    this->server->on("/addr", HTTP_GET, [this]() {
+        if (this->module == nullptr) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(500, "application/json", "{\"success\":false,\"error\":\"module not set\"}");
+            return;
+        }
+
+        if (!this->server->hasArg("oldAddr") || !this->server->hasArg("newAddr")) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"oldAddr and newAddr required\"}");
+            return;
+        }
+
+        String oldAddrStr = this->server->arg("oldAddr");
+        String newAddrStr = this->server->arg("newAddr");
+        uint8_t oldAddr = 0;
+        uint8_t newAddr = 0;
+
+        if (!parseModuleAddress(oldAddrStr, &oldAddr) || !parseModuleAddress(newAddrStr, &newAddr)) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"addresses must be integers 1-255\"}");
+            return;
+        }
+
+        if (!isConfiguredModuleAddress(oldAddr, this->moduleAddresses)) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(404, "application/json", "{\"success\":false,\"error\":\"old address not configured\"}");
+            return;
+        }
+
+        this->module->changeAddress(oldAddr, newAddr);
+
+        this->server->sendHeader("Connection", "close");
+        this->server->send(200, "application/json", "{\"success\":true,\"oldAddr\":" + String(oldAddr) + ",\"newAddr\":" + String(newAddr) + "}");
+    });
+}
+

@@ -5,7 +5,6 @@
       "track": "1",
       "label": "Departure Hour",
       "length": 1,
-      "baseType": "alphanumeric40",
       "defaultPosition": 39,
       "positions": [
         {"label": "0."},
@@ -55,7 +54,6 @@
       "track": "1",
       "label": "Departure Minute",
       "length": 1,
-      "baseType": "minute62",
       "defaultPosition": 62,
       "positions": [
         {"label": "31"},
@@ -127,7 +125,6 @@
       "track": "1",
       "label": "Service Information",
       "length": 2,
-      "baseType": "minute62",
       "defaultPosition": 62,
       "positions": [
         {"label": "ca. 3 Minuten Später"},
@@ -199,7 +196,6 @@
       "track": "1",
       "label": "Service Type",
       "length": 2,
-      "baseType": "minute62",
       "defaultPosition": 62,
       "positions": [
         {"label": "City Night Line"},
@@ -271,7 +267,6 @@
       "track": "1",
       "label": "Destination",
       "length": 3,
-      "baseType": "minute62",
       "defaultPosition": 62,
       "positions": [
         {"label": "Zürich HB"},
@@ -338,11 +333,10 @@
       ]
     },
     {
-      "address": 6,
+      "address": 10,
       "track": "1",
       "label": "Destination",
       "length": 3,
-      "baseType": "minute62",
       "defaultPosition": 62,
       "positions": [
         {"label": "Zürich HB"},

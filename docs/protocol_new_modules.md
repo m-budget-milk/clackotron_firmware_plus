@@ -67,8 +67,9 @@ The module answer 1 bit with type
 
 | Int | Hex | Type                 | #Blades |
 |-----|-----|----------------------|---------|
-| 1   | 01  | Hour/Alphanummeric   | 40      |
-| 2   | 02  | Minute               | 62      |
+| 1   | 01  | 40 Blades            | 40      |
+| 2   | 02  | 62 Blades            | 62      |
+| 66  | 42  | 62 Blades            | 62      |
 
 #### Example
 Address: 29 , Module Type: Hour<br>

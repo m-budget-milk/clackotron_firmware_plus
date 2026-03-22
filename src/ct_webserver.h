@@ -37,6 +37,7 @@ class CTWebserver {
         void createZeroRoute();
         void createStepRoute();
         void createTypeRoute();
+        void createAddrRoute();
 };
 
 #endif // _CLACKOTRON_WEBSERVER_H_
