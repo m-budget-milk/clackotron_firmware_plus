@@ -55,6 +55,7 @@ void CTWebserver::setup(CTPreferences* preferences, CTModule* module, uint8_t* m
     this->createStepRoute();
     this->createTypeRoute();
     this->createAddrRoute();
+    this->createReadAddrRoute();
 
     this->server->begin();
 }
@@ -311,6 +312,42 @@ void CTWebserver::createAddrRoute() {
 
         this->server->sendHeader("Connection", "close");
         this->server->send(200, "application/json", "{\"success\":true,\"oldAddr\":" + String(oldAddr) + ",\"newAddr\":" + String(newAddr) + "}");
+    });
+}
+
+void CTWebserver::createReadAddrRoute() {
+    this->server->on("/readaddr", HTTP_GET, [this]() {
+        if (this->module == nullptr) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(500, "text/plain", "Internal module is not set");
+            return;
+        }
+
+        String response;
+        bool success = false;
+        String successMsg = "{\"success\":false,\"error\":\"Failed to read module address\"}";
+        uint8_t moduleAddr = 0;
+        uint8_t currentAddr = 0;
+
+        if (this->server->hasArg("addr")) {
+            String addr = this->server->arg("addr");
+            if (!parseModuleAddress(addr, &moduleAddr)) {
+                this->server->sendHeader("Connection", "close");
+                this->server->send(400, "text/plain", "Query parameter 'addr' must be an integer in range 1-255\n");
+                return;
+            }
+
+            if (moduleAddr > 0 && isConfiguredModuleAddress(moduleAddr, this->moduleAddresses)) {
+                // Attempt to read address from module
+                if (this->module->getAddress(moduleAddr, &currentAddr)) {
+                    success = true;
+                    successMsg = "{\"success\":true,\"addr\":" + String(moduleAddr) + ",\"currentAddr\":" + String(currentAddr) + "}";
+                }
+            }
+        }
+
+        this->server->sendHeader("Connection", "close");
+        this->server->send(200, "application/json", successMsg);
     });
 }
 

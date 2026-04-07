@@ -81,6 +81,12 @@ class CTModule {
     /// @return True when a response byte was received, false on timeout/error
     bool getType(uint8_t addr, uint8_t* type);
 
+    /// @brief Read the RS485 address from a specific module
+    /// @param addr - The address of the module to query
+    /// @param readAddr - Pointer to store the resulting module address byte
+    /// @return True when a response byte was received, false on timeout/error
+    bool getAddress(uint8_t addr, uint8_t* readAddr);
+
   private:
     KMP_RS485* rs485;
 

@@ -38,6 +38,7 @@ class CTWebserver {
         void createStepRoute();
         void createTypeRoute();
         void createAddrRoute();
+        void createReadAddrRoute();
 };
 
 #endif // _CLACKOTRON_WEBSERVER_H_

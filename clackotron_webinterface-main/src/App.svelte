@@ -16,6 +16,8 @@
   let oldAddrChange = "";
   let newAddrChange = "";
   let addrResult = null;
+  let readAddrAddress = "";
+  let readAddrResult = null;
   let saveStatus = null;
   let selectedPositions = {};
 
@@ -213,6 +215,32 @@
     } catch (error) {
       console.error("Error changing module address:", error);
       alert("Error changing module address");
+    }
+  };
+
+  const getModuleAddr = async () => {
+    readAddrResult = null;
+    const addr = Number.parseInt(readAddrAddress, 10);
+
+    if (!Number.isInteger(addr) || addr < 1 || addr > 255) {
+      readAddrResult = { error: "Invalid address (1-255)" };
+      return;
+    }
+
+    try {
+      const response = await fetch(`/readaddr?addr=${addr}`);
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Failed to read module address:", errText);
+        readAddrResult = { error: "Failed to read module address" };
+        return;
+      }
+
+      const data = await response.json();
+      readAddrResult = data;
+    } catch (error) {
+      console.error("Error reading module address:", error);
+      readAddrResult = { error: `Request failed: ${error.message}` };
     }
   };
 
@@ -418,6 +446,32 @@
             {#if addrResult}
               <p class="debug-result">
                 Changed module address from {addrResult.oldAddr} to {addrResult.newAddr}
+              </p>
+            {/if}
+          </div>
+
+          <div class="debug-option">
+            <h4>Read Module Address</h4>
+            <p>Reads the RS485 address currently programmed into a module.</p>
+            <div class="debug-controls">
+              <input
+                type="number"
+                min="1"
+                max="255"
+                bind:value={readAddrAddress}
+                placeholder="Module address"
+              />
+              <button on:click={getModuleAddr}>Read Address</button>
+            </div>
+            {#if readAddrResult}
+              <p class="debug-result">
+                {#if readAddrResult.error}
+                  Error: {readAddrResult.error}
+                {:else if readAddrResult.success}
+                  Module {readAddrResult.addr} is at address <strong>{readAddrResult.currentAddr}</strong>
+                {:else}
+                  Failed to read module address
+                {/if}
               </p>
             {/if}
           </div>

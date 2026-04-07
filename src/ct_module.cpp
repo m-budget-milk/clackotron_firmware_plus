@@ -81,6 +81,27 @@ bool CTModule::getType(uint8_t addr, uint8_t* type) {
     return true;
 }
 
+bool CTModule::getAddress(uint8_t addr, uint8_t* readAddr) {
+    if (this->rs485 == nullptr || readAddr == nullptr) return false;
+
+    // Drain stale bytes before issuing a new request.
+    while (this->rs485->available() > 0) {
+        this->rs485->read();
+    }
+
+    this->sendToModule(0xDE, addr);
+
+    int response = this->waitForResponseByte(200);
+    if (response < 0) {
+        CTLog::error("module: failed to read address from module " + String(addr, HEX));
+        return false;
+    }
+
+    *readAddr = (uint8_t)response;
+    CTLog::info("module: module " + String(addr, HEX) + " address = " + String(*readAddr, HEX));
+    return true;
+}
+
 // Check if module can show a character and get the position of the character
 // if possible. The char to blade mapping is based on the following table:
 // https://github.com/adfinis/sbb-fallblatt/blob/master/doc/char_mapping.md#alphanummeric
