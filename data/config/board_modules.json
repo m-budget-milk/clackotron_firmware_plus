@@ -5,7 +5,7 @@
       "track": "1",
       "label": "Departure Hour",
       "length": 1,
-      "defaultPosition": 39,
+      "defaultPosition": 24,
       "positions": [
         {"label": "0."},
         {"label": "1."},
@@ -38,7 +38,7 @@
       "track": "1",
       "label": "Departure Minute",
       "length": 1,
-      "defaultPosition": 62,
+      "defaultPosition": 29,
       "positions": [
         {"label": "31"},
         {"label": "32"},
@@ -108,7 +108,7 @@
       "track": "1",
       "label": "Service Type",
       "length": 2,
-      "defaultPosition": 62,
+      "defaultPosition": 24,
       "positions": [
         {"label": ""},
         {"label": "Regio"},
@@ -133,8 +133,7 @@
         {"label": "Ersatzbus"},
         {"label": ""},
         {"label": "PE"},
-        {"label": "Regio Express"},
-        {"label": ""},
+        {"label": "Regio Express"}
       ]
     },
     {
@@ -142,7 +141,7 @@
       "track": "1",
       "label": "Destination",
       "length": 3,
-      "defaultPosition": 62,
+      "defaultPosition": 35,
       "positions": [
         {"label": ""},
         {"label": "Visp"},

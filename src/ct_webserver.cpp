@@ -3,6 +3,7 @@
 #include "ct_webserver.h"
 #include "ct_logging.h"
 #include "config.h"
+#include "ct_stationboard.h"
 #include <ArduinoJson.h>
 
 static bool parseModuleAddress(const String& raw, uint8_t* outAddr) {
@@ -55,7 +56,9 @@ void CTWebserver::setup(CTPreferences* preferences, CTModule* module, uint8_t* m
     this->createStepRoute();
     this->createTypeRoute();
     this->createAddrRoute();
-    this->createReadAddrRoute();
+    this->createMirrorConfigGetRoute();
+    this->createMirrorConfigSetRoute();
+    this->createStationSearchRoute();
 
     this->server->begin();
 }
@@ -137,6 +140,15 @@ void CTWebserver::createConfigSetRoute() {
         serializeJson(positions, posJson);
         this->preferences->setBoardPositions(posJson);
         CTLog::info("webserver: set board positions to " + posJson);
+
+        if (doc.containsKey("mode")) {
+            this->preferences->setDisplayMode(doc["mode"].as<String>());
+        }
+        if (doc.containsKey("randomIntervalSeconds")) {
+            uint32_t interval = doc["randomIntervalSeconds"].as<uint32_t>();
+            this->preferences->setRandomShuffleIntervalSeconds(interval);
+        }
+
         *this->needsToLoadConfig = true;
 
         this->server->sendHeader("Connection", "close");
@@ -167,10 +179,10 @@ void CTWebserver::createZeroRoute() {
                 this->server->send(404, "text/plain", "Module address not configured\n");
                 return;
             }
-            
+
             CTLog::info("webserver: zeroing module " + String(moduleAddr, HEX));
             this->module->zero(moduleAddr);
-            
+
             this->server->sendHeader("Connection", "close");
             this->server->send(200, "text/plain", "Zeroed module " + addr + "\n");
         } else {
@@ -183,7 +195,7 @@ void CTWebserver::createZeroRoute() {
 
             CTLog::info("webserver: zeroing all modules");
             this->module->zeroAll(this->moduleAddresses, MAX_CONNECTED_MODULES);
-            
+
             this->server->sendHeader("Connection", "close");
             this->server->send(200, "text/plain", "Zeroed all modules\n");
         }
@@ -315,39 +327,139 @@ void CTWebserver::createAddrRoute() {
     });
 }
 
-void CTWebserver::createReadAddrRoute() {
-    this->server->on("/readaddr", HTTP_GET, [this]() {
-        if (this->module == nullptr) {
+void CTWebserver::createMirrorConfigGetRoute() {
+    this->server->on("/mirror-config", HTTP_GET, [this]() {
+        if (this->preferences == nullptr) {
             this->server->sendHeader("Connection", "close");
-            this->server->send(500, "text/plain", "Internal module is not set");
+            this->server->send(500, "text/plain", "No preferences object set");
             return;
         }
 
-        String response;
-        bool success = false;
-        String successMsg = "{\"success\":false,\"error\":\"Failed to read module address\"}";
-        uint8_t moduleAddr = 0;
-        uint8_t currentAddr = 0;
+        this->server->sendHeader("Connection", "close");
+        this->server->send(200, "application/json", this->preferences->getMirrorConfig());
+    });
+}
 
-        if (this->server->hasArg("addr")) {
-            String addr = this->server->arg("addr");
-            if (!parseModuleAddress(addr, &moduleAddr)) {
+void CTWebserver::createMirrorConfigSetRoute() {
+    this->server->on("/mirror-config", HTTP_POST, [this]() {
+        if (!this->server->hasArg("payload")) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"missing payload\"}");
+            return;
+        }
+
+        if (this->preferences == nullptr) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(500, "text/plain", "No preferences object set");
+            return;
+        }
+
+        String payload = WebServer::urlDecode(this->server->arg("payload"));
+
+        DynamicJsonDocument doc(4096);
+        DeserializationError err = deserializeJson(doc, payload);
+        if (err) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"invalid JSON\"}");
+            return;
+        }
+
+        // Validate refreshIntervalSeconds bounds
+        if (doc.containsKey("refreshIntervalSeconds")) {
+            int interval = doc["refreshIntervalSeconds"].as<int>();
+            if (interval < MIRROR_MIN_REFRESH_SECONDS || interval > MIRROR_MAX_REFRESH_SECONDS) {
                 this->server->sendHeader("Connection", "close");
-                this->server->send(400, "text/plain", "Query parameter 'addr' must be an integer in range 1-255\n");
+                this->server->send(400, "application/json", "{\"success\":false,\"error\":\"refreshIntervalSeconds out of range\"}");
                 return;
             }
+        }
 
-            if (moduleAddr > 0 && isConfiguredModuleAddress(moduleAddr, this->moduleAddresses)) {
-                // Attempt to read address from module
-                if (this->module->getAddress(moduleAddr, &currentAddr)) {
-                    success = true;
-                    successMsg = "{\"success\":true,\"addr\":" + String(moduleAddr) + ",\"currentAddr\":" + String(currentAddr) + "}";
+        // Validate mapping field names when mappings object is present
+        if (doc.containsKey("mappings")) {
+            JsonObject mappings = doc["mappings"].as<JsonObject>();
+            const char* validFields[] = {
+                MIRROR_FIELD_NONE, MIRROR_FIELD_DESTINATION,
+                MIRROR_FIELD_DEPARTURE_HOUR, MIRROR_FIELD_DEPARTURE_MINUTE,
+                MIRROR_FIELD_CATEGORY, MIRROR_FIELD_NUMBER,
+                MIRROR_FIELD_DELAY, MIRROR_FIELD_PLATFORM
+            };
+            const int validCount = 8;
+
+            for (JsonPair kv : mappings) {
+                // Validate module address key
+                uint8_t addr = 0;
+                if (!parseModuleAddress(String(kv.key().c_str()), &addr)) {
+                    this->server->sendHeader("Connection", "close");
+                    this->server->send(400, "application/json", "{\"success\":false,\"error\":\"invalid address key in mappings\"}");
+                    return;
+                }
+                if (!this->preferences->isValidBoardAddress(addr)) {
+                    this->server->sendHeader("Connection", "close");
+                    this->server->send(400, "application/json", "{\"success\":false,\"error\":\"unknown module address in mappings\"}");
+                    return;
+                }
+
+                // Validate field value
+                String field = kv.value().as<String>();
+                bool fieldOk = false;
+                for (int i = 0; i < validCount; i++) {
+                    if (field == validFields[i]) { fieldOk = true; break; }
+                }
+                if (!fieldOk) {
+                    this->server->sendHeader("Connection", "close");
+                    this->server->send(400, "application/json", "{\"success\":false,\"error\":\"unknown field name: " + field + "\"}");
+                    return;
                 }
             }
         }
 
+        String serialized;
+        serializeJson(doc, serialized);
+        this->preferences->setMirrorConfig(serialized);
+
+        // Keep runtime mode aligned with mirror enable toggle from the mirror UI.
+        bool mirrorEnabled = doc["enabled"] | false;
+        this->preferences->setDisplayMode(mirrorEnabled ? "mirror" : "manual");
+        *this->needsToLoadConfig = true;
+
+        CTLog::info("webserver: mirror config updated");
         this->server->sendHeader("Connection", "close");
-        this->server->send(200, "application/json", successMsg);
+        this->server->send(200, "application/json", "{\"success\":true}");
+    });
+}
+
+void CTWebserver::createStationSearchRoute() {
+    this->server->on("/api/station-search", HTTP_GET, [this]() {
+        if (!this->server->hasArg("query")) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"query parameter required\"}");
+            return;
+        }
+
+        String query = this->server->arg("query");
+        if (query.length() < 2) {
+            this->server->sendHeader("Connection", "close");
+            this->server->send(400, "application/json", "{\"success\":false,\"error\":\"query too short\"}");
+            return;
+        }
+
+        CTStationboard sb;
+        StationResult results[10];
+        int count = sb.searchStations(query, results, 10);
+
+        DynamicJsonDocument doc(2048);
+        JsonArray arr = doc.createNestedArray("stations");
+        for (int i = 0; i < count; i++) {
+            JsonObject s = arr.createNestedObject();
+            s["id"]   = results[i].id;
+            s["name"] = results[i].name;
+        }
+        doc["success"] = true;
+
+        String output;
+        serializeJson(doc, output);
+        this->server->sendHeader("Connection", "close");
+        this->server->send(200, "application/json", output);
     });
 }
 

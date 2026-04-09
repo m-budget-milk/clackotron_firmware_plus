@@ -1,0 +1,13 @@
+{
+  "transformations": [
+    {
+      "category": "B",
+      "operator": "PAG",
+      "display": "Postauto"
+    },
+    {
+      "to": "Wil SG",
+      "display": "Göschenen"
+    }
+  ]
+}

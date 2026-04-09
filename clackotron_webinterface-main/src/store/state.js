@@ -5,6 +5,17 @@ export const boardPositions = writable({});
 export const boardLayout = writable([]);
 export const boardLoaded = writable(false);
 
+export const mirrorConfig = writable({
+  enabled: false,
+  stationQuery: '',
+  stationId: '',
+  platform: '',
+  refreshIntervalSeconds: 30,
+  mappings: {},
+  departureWindowEnabled: false,
+  departureWindowMinutes: 10,
+});
+
 export const boardRows = derived(
   [boardDefs, boardPositions],
   ([$boardDefs, $boardPositions]) => {
@@ -48,11 +59,35 @@ export async function loadBoardData() {
   boardPositions.set(config.modulePositions || {});
   boardLayout.set(layout.modules || []);
   boardLoaded.set(true);
+
+  return config;
 }
 
-export async function saveBoardPositions(positions) {
-  const payload = encodeURIComponent(JSON.stringify({ modulePositions: positions }));
+export async function saveBoardPositions(positions, options = {}) {
+  const payloadObj = {
+    modulePositions: positions,
+    mode: options.mode,
+    randomIntervalSeconds: options.randomIntervalSeconds,
+  };
+  const payload = encodeURIComponent(JSON.stringify(payloadObj));
   const response = await fetch('/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `payload=${payload}`,
+  });
+  return response.json();
+}
+
+export async function loadMirrorConfig() {
+  const response = await fetch('/mirror-config');
+  const data = await response.json();
+  mirrorConfig.set(data);
+  return data;
+}
+
+export async function saveMirrorConfig(config) {
+  const payload = encodeURIComponent(JSON.stringify(config));
+  const response = await fetch('/mirror-config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `payload=${payload}`,

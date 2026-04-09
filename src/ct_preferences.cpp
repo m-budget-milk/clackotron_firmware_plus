@@ -2,6 +2,7 @@
 #include "ct_preferences.h"
 #include "ct_logging.h"
 #include "config.h"
+#include "ct_stationboard.h"
 
 bool CTPreferences::setup() {
     
@@ -38,6 +39,10 @@ bool CTPreferences::setup() {
 
     if (!LittleFS.exists(BOARD_MODULES_CONFIG_BKP_PATH)) {
         this->copyLittleFsFile(BOARD_MODULES_CONFIG_FILE_PATH, BOARD_MODULES_CONFIG_BKP_PATH);
+    }
+
+    if (!LittleFS.exists(MIRROR_TRANSFORM_CONFIG_BKP_PATH) && LittleFS.exists(MIRROR_TRANSFORM_CONFIG_FILE_PATH)) {
+        this->copyLittleFsFile(MIRROR_TRANSFORM_CONFIG_FILE_PATH, MIRROR_TRANSFORM_CONFIG_BKP_PATH);
     }
 
     return true;
@@ -237,6 +242,10 @@ void CTPreferences::clear() {
     this->copyLittleFsFile(MODULE_CONFIG_BKP_PATH, MODULE_CONFIG_FILE_PATH);
     this->copyLittleFsFile(TIMEZONE_CONFIG_BKP_PATH, TIMEZONE_CONFIG_FILE_PATH);
     this->copyLittleFsFile(WEBINTERFACE_CONFIG_BKP_PATH, WEBINTERFACE_CONFIG_FILE_PATH);
+    this->copyLittleFsFile(BOARD_MODULES_CONFIG_BKP_PATH, BOARD_MODULES_CONFIG_FILE_PATH);
+    if (LittleFS.exists(MIRROR_TRANSFORM_CONFIG_BKP_PATH)) {
+        this->copyLittleFsFile(MIRROR_TRANSFORM_CONFIG_BKP_PATH, MIRROR_TRANSFORM_CONFIG_FILE_PATH);
+    }
     
     CTLog::info("preferences: cleared preferences and config files");
 }
@@ -376,6 +385,8 @@ String CTPreferences::getBoardPositionsJson() {
 
     DynamicJsonDocument result(512);
     JsonObject positions = result.createNestedObject("modulePositions");
+    result["mode"] = this->getDisplayMode();
+    result["randomIntervalSeconds"] = this->getRandomShuffleIntervalSeconds();
 
     JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
     for (JsonObject mod : modules) {
@@ -388,6 +399,157 @@ String CTPreferences::getBoardPositionsJson() {
     String output;
     serializeJson(result, output);
     return output;
+}
+
+String CTPreferences::getDisplayMode() {
+    String mode = this->preferences.getString("displayMode", "manual");
+    mode.toLowerCase();
+    if (mode != "random" && mode != "mirror") {
+        return "manual";
+    }
+
+    return mode;
+}
+
+void CTPreferences::setDisplayMode(String mode) {
+    mode.toLowerCase();
+    if (mode != "random" && mode != "mirror") {
+        mode = "manual";
+    }
+
+    this->preferences.putString("displayMode", mode);
+}
+
+uint32_t CTPreferences::getRandomShuffleIntervalSeconds() {
+    uint32_t seconds = this->preferences.getUInt("randomIntSec", 60);
+
+    if (seconds < 1) seconds = 1;
+    if (seconds > 86400) seconds = 86400;
+
+    return seconds;
+}
+
+void CTPreferences::setRandomShuffleIntervalSeconds(uint32_t seconds) {
+    if (seconds < 1) seconds = 1;
+    if (seconds > 86400) seconds = 86400;
+
+    this->preferences.putUInt("randomIntSec", seconds);
+}
+
+int CTPreferences::getBoardModulePositionCount(uint8_t addr) {
+    if (this->boardModulesDoc == nullptr) return 0;
+
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        if (mod["address"].as<uint8_t>() == addr) {
+            return (int)mod["positions"].size();
+        }
+    }
+
+    return 0;
+}
+
+int CTPreferences::findBoardPositionByLabel(uint8_t addr, const String& value) {
+    if (this->boardModulesDoc == nullptr) return -1;
+    JsonArray modules = (*this->boardModulesDoc)["modules"].as<JsonArray>();
+    for (JsonObject mod : modules) {
+        if (mod["address"].as<uint8_t>() == addr) {
+            return findPositionByLabel(mod["positions"].as<JsonArray>(), value);
+        }
+    }
+    return -1;
+}
+
+String CTPreferences::getMirrorConfig() {
+    String stored = this->preferences.getString("mirrorCfg", "");
+    if (stored.length() > 0) return stored;
+
+    // Return built-in defaults when nothing is stored yet
+    return "{\"enabled\":false,\"stationQuery\":\"\",\"stationId\":\"\",\"platform\":\"\",\"refreshIntervalSeconds\":30,\"mappings\":{},\"departureWindowEnabled\":false,\"departureWindowMinutes\":10}";
+}
+
+void CTPreferences::setMirrorConfig(String json) {
+    this->preferences.putString("mirrorCfg", json);
+}
+
+String CTPreferences::resolveMirrorTransformedValue(const String& category, const String& operatorCode) {
+    if (category.length() == 0) return "";
+
+    File file = LittleFS.open(MIRROR_TRANSFORM_CONFIG_FILE_PATH, "r");
+    if (!file) {
+        CTLog::error("preferences: mirror transformations file missing");
+        return "";
+    }
+
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, file);
+    file.close();
+    if (err) {
+        CTLog::error("preferences: failed to parse mirror transformations: " + String(err.c_str()));
+        return "";
+    }
+
+    JsonArray rules = doc["transformations"].as<JsonArray>();
+    if (rules.isNull()) return "";
+
+    // Pass 1: exact category + operator match (most specific)
+    for (JsonObject rule : rules) {
+        String c = rule["category"].as<String>();
+        String o = rule["operator"].as<String>();
+        String display = rule["display"].as<String>();
+
+        if (display.length() == 0 || c.length() == 0 || o.length() == 0) continue;
+        if (c.equalsIgnoreCase(category) && o.equalsIgnoreCase(operatorCode)) {
+            CTLog::debug("preferences: mirror transform exact match " + c + "+" + o + " -> " + display);
+            return display;
+        }
+    }
+
+    // Pass 2: category-only match (operator omitted or empty in rule)
+    for (JsonObject rule : rules) {
+        String c = rule["category"].as<String>();
+        String display = rule["display"].as<String>();
+        bool hasOperator = rule.containsKey("operator");
+        String o = hasOperator ? rule["operator"].as<String>() : "";
+
+        if (display.length() == 0 || c.length() == 0) continue;
+        if ((!hasOperator || o.length() == 0) && c.equalsIgnoreCase(category)) {
+            CTLog::debug("preferences: mirror transform category match " + c + " -> " + display);
+            return display;
+        }
+    }
+
+    return "";
+}
+
+String CTPreferences::resolveMirrorDestinationOverride(const String& toValue) {
+    if (toValue.length() == 0) return "";
+
+    File file = LittleFS.open(MIRROR_TRANSFORM_CONFIG_FILE_PATH, "r");
+    if (!file) return "";
+
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, file);
+    file.close();
+    if (err) {
+        CTLog::error("preferences: failed to parse mirror transformations: " + String(err.c_str()));
+        return "";
+    }
+
+    JsonArray rules = doc["transformations"].as<JsonArray>();
+    if (rules.isNull()) return "";
+
+    for (JsonObject rule : rules) {
+        String toRule = rule["to"].as<String>();
+        String display = rule["display"].as<String>();
+        if (toRule.length() == 0 || display.length() == 0) continue;
+        if (toRule.equalsIgnoreCase(toValue)) {
+            CTLog::debug("preferences: mirror destination override " + toRule + " -> " + display);
+            return display;
+        }
+    }
+
+    return "";
 }
 
 void CTPreferences::copyLittleFsFile(const char* src, const char* dst) {

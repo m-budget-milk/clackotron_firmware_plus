@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "stationQuery": "",
+  "stationId": "",
+  "platform": "",
+  "refreshIntervalSeconds": 30,
+  "mappings": {},
+  "departureWindowEnabled": false,
+  "departureWindowMinutes": 10
+}

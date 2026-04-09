@@ -1,6 +1,16 @@
 <script>
   import { onMount } from "svelte";
-  import { boardRows, boardTrackGroups, boardLayout, boardLoaded, loadBoardData, saveBoardPositions } from "./store/state";
+  import {
+    boardRows,
+    boardTrackGroups,
+    boardLayout,
+    boardLoaded,
+    loadBoardData,
+    saveBoardPositions,
+    mirrorConfig,
+    loadMirrorConfig,
+    saveMirrorConfig,
+  } from "./store/state";
   import { wiTitle, wiStrings, wiVersion } from "./store/webinterface";
 
   $: {
@@ -16,10 +26,13 @@
   let oldAddrChange = "";
   let newAddrChange = "";
   let addrResult = null;
-  let readAddrAddress = "";
-  let readAddrResult = null;
   let saveStatus = null;
   let selectedPositions = {};
+
+  let mirrorStationSearch = "";
+  let mirrorSearchResults = [];
+  let mirrorSearching = false;
+  let mirrorSaveStatus = null;
 
   $: if ($boardLoaded && Object.keys(selectedPositions).length === 0) {
     selectedPositions = Object.fromEntries(
@@ -36,13 +49,11 @@
       const token = String(raw);
       const isFiller = token.toUpperCase() === "X";
 
-      // Consume explicit X placeholders for previous multi-cell modules.
       if (pendingFillers > 0 && isFiller) {
         pendingFillers--;
         continue;
       }
 
-      // If we expected fillers but got a real token, stop consuming and render it.
       if (pendingFillers > 0 && !isFiller) {
         pendingFillers = 0;
       }
@@ -110,7 +121,6 @@
       alert("Please enter a valid module address (0-255)");
       return;
     }
-
     try {
       const response = await fetch(`/zero?addr=${addr}`);
       if (!response.ok) {
@@ -131,9 +141,7 @@
       alert("Please enter a valid module address (0-255)");
       return;
     }
-
     stepResult = null;
-
     try {
       const response = await fetch(`/step?addr=${addr}`);
       if (!response.ok) {
@@ -218,35 +226,93 @@
     }
   };
 
-  const getModuleAddr = async () => {
-    readAddrResult = null;
-    const addr = Number.parseInt(readAddrAddress, 10);
+  const MIRROR_FIELDS = [
+    { value: "none", label: "- no mapping -" },
+    { value: "destination", label: "Destination" },
+    { value: "departure_hour", label: "Departure Hour" },
+    { value: "departure_minute", label: "Departure Minute" },
+    { value: "category", label: "Category / Service Type" },
+    { value: "number", label: "Train Number" },
+    { value: "delay", label: "Delay" },
+    { value: "platform", label: "Platform" },
+  ];
 
-    if (!Number.isInteger(addr) || addr < 1 || addr > 255) {
-      readAddrResult = { error: "Invalid address (1-255)" };
-      return;
-    }
-
+  const searchStations = async () => {
+    if (mirrorStationSearch.length < 2) return;
+    mirrorSearching = true;
+    mirrorSearchResults = [];
     try {
-      const response = await fetch(`/readaddr?addr=${addr}`);
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("Failed to read module address:", errText);
-        readAddrResult = { error: "Failed to read module address" };
-        return;
-      }
-
-      const data = await response.json();
-      readAddrResult = data;
-    } catch (error) {
-      console.error("Error reading module address:", error);
-      readAddrResult = { error: `Request failed: ${error.message}` };
+      const resp = await fetch(`/api/station-search?query=${encodeURIComponent(mirrorStationSearch)}`);
+      const data = await resp.json();
+      mirrorSearchResults = data.stations || [];
+    } catch (e) {
+      mirrorSearchResults = [];
+    } finally {
+      mirrorSearching = false;
     }
+  };
+
+  const selectStation = (station) => {
+    $mirrorConfig = { ...$mirrorConfig, stationQuery: station.name, stationId: station.id };
+    mirrorSearchResults = [];
+    mirrorStationSearch = "";
+  };
+
+  const setMirrorMapping = (addr, field) => {
+    const mappings = { ...$mirrorConfig.mappings };
+    if (field === "none") {
+      delete mappings[String(addr)];
+    } else {
+      mappings[String(addr)] = field;
+    }
+    $mirrorConfig = { ...$mirrorConfig, mappings };
+  };
+
+  const saveMirror = async () => {
+    mirrorSaveStatus = null;
+    try {
+      const result = await saveMirrorConfig($mirrorConfig);
+      mirrorSaveStatus = result.success ? "ok" : "error";
+    } catch (e) {
+      mirrorSaveStatus = "error";
+    }
+  };
+
+  const inferFieldFromLabel = (label) => {
+    const l = String(label || "").toLowerCase();
+    if (l.includes("destination")) return "destination";
+    if (l.includes("departure hour") || l.includes("hour")) return "departure_hour";
+    if (l.includes("departure minute") || l.includes("minute")) return "departure_minute";
+    if (l.includes("service type") || l.includes("category")) return "category";
+    if (l.includes("train") && l.includes("number")) return "number";
+    if (l.includes("delay")) return "delay";
+    if (l.includes("platform") || l.includes("track")) return "platform";
+    return "none";
+  };
+
+  const buildDefaultMappings = (rows) => {
+    const mappings = {};
+    for (const row of rows) {
+      const field = inferFieldFromLabel(row.label);
+      if (field !== "none") {
+        mappings[String(row.address)] = field;
+      }
+    }
+    return mappings;
   };
 
   onMount(async () => {
     await loadWebinterfaceConfig();
     await loadBoardData();
+    const mirror = await loadMirrorConfig();
+
+    const hasMappings = mirror?.mappings && Object.keys(mirror.mappings).length > 0;
+    if (!hasMappings && Array.isArray($boardRows) && $boardRows.length > 0) {
+      const autoMappings = buildDefaultMappings($boardRows);
+      if (Object.keys(autoMappings).length > 0) {
+        $mirrorConfig = { ...$mirrorConfig, mappings: autoMappings };
+      }
+    }
   });
 </script>
 
@@ -254,18 +320,16 @@
   <header>
     <h1 id="title">{$wiTitle}</h1>
   </header>
+
   <div class="content">
     <div class="page-tabs">
-      <button
-        class:active={activePage === "config"}
-        on:click={() => (activePage = "config")}
-      >
+      <button class:active={activePage === "config"} on:click={() => (activePage = "config")}>
         Configuration
       </button>
-      <button
-        class:active={activePage === "debug"}
-        on:click={() => (activePage = "debug")}
-      >
+      <button class:active={activePage === "mirror"} on:click={() => (activePage = "mirror")}>
+        Mirror
+      </button>
+      <button class:active={activePage === "debug"} on:click={() => (activePage = "debug")}>
         Debug
       </button>
     </div>
@@ -323,7 +387,7 @@
                         }}
                       >
                         {#each row.positions as pos, i}
-                          <option value={i}>{i}{pos.label ? ': ' + pos.label : ''}</option>
+                          <option value={i}>{i}{pos.label ? ": " + pos.label : ""}</option>
                         {/each}
                       </select>
                     </td>
@@ -333,151 +397,184 @@
             </table>
           </div>
         {/each}
+
         <div class="save-line">
           <button on:click={saveBoard}>Save</button>
-          {#if saveStatus === 'ok'}
+          {#if saveStatus === "ok"}
             <span class="save-status ok">Saved!</span>
-          {:else if saveStatus === 'error'}
+          {:else if saveStatus === "error"}
             <span class="save-status error">Save failed</span>
           {/if}
         </div>
       {/if}
+
+    {:else if activePage === "mirror"}
+      <h2 class="section-title">Stationboard Mirror</h2>
+      <div class="block mirror-block">
+        <div class="mirror-row">
+          <div class="mirror-label">Enable mirror mode</div>
+          <input type="checkbox" bind:checked={$mirrorConfig.enabled} />
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Station search</div>
+          <div class="mirror-search-wrap">
+            <input
+              type="text"
+              placeholder="Search station name..."
+              bind:value={mirrorStationSearch}
+              on:keydown={(e) => e.key === "Enter" && searchStations()}
+            />
+            <button on:click={searchStations} disabled={mirrorSearching}>
+              {mirrorSearching ? "..." : "Search"}
+            </button>
+          </div>
+          {#if mirrorSearchResults.length > 0}
+            <ul class="station-results">
+              {#each mirrorSearchResults as s}
+                <li>
+                  <button class="station-result-btn" on:click={() => selectStation(s)}>
+                    {s.name} <span class="station-id">({s.id})</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Station name</div>
+          <input type="text" bind:value={$mirrorConfig.stationQuery} placeholder="e.g. Andermatt" />
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Station ID</div>
+          <input type="text" bind:value={$mirrorConfig.stationId} placeholder="e.g. 8509070" />
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Platform / Track</div>
+          <input type="text" bind:value={$mirrorConfig.platform} placeholder="e.g. 4" />
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Refresh interval (s)</div>
+          <input type="number" min="10" max="3600" bind:value={$mirrorConfig.refreshIntervalSeconds} />
+        </div>
+
+        <div class="mirror-row">
+          <div class="mirror-label">Only show within N minutes</div>
+          <input type="checkbox" bind:checked={$mirrorConfig.departureWindowEnabled} />
+        </div>
+
+        {#if $mirrorConfig.departureWindowEnabled}
+        <div class="mirror-row">
+          <div class="mirror-label">Window (minutes)</div>
+          <input type="number" min="1" max="1440" bind:value={$mirrorConfig.departureWindowMinutes} />
+        </div>
+        {/if}
+
+        <h3 class="track-heading">Module Field Mapping</h3>
+        <table class="board-table">
+          <thead>
+            <tr>
+              <th>Addr</th>
+              <th>Module Label</th>
+              <th>API Field</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each $boardRows as row}
+              <tr>
+                <td>{row.address}</td>
+                <td>{row.label || "-"}</td>
+                <td>
+                  <select
+                    value={$mirrorConfig.mappings[String(row.address)] ?? "none"}
+                    on:change={(e) => setMirrorMapping(row.address, e.target.value)}
+                  >
+                    {#each MIRROR_FIELDS as f}
+                      <option value={f.value}>{f.label}</option>
+                    {/each}
+                  </select>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+
+        <div class="save-line">
+          <button on:click={saveMirror}>Save Mirror Config</button>
+          {#if mirrorSaveStatus === "ok"}
+            <span class="save-status ok">Saved!</span>
+          {:else if mirrorSaveStatus === "error"}
+            <span class="save-status error">Save failed</span>
+          {/if}
+        </div>
+      </div>
+
     {:else}
-        <h2 class="section-title">Debug Functions</h2>
-        <div class="block debug-block">
-          <p class="debug-intro">Use these actions for diagnostics and maintenance.</p>
+      <h2 class="section-title">Debug Functions</h2>
+      <div class="block debug-block">
+        <p class="debug-intro">Use these actions for diagnostics and maintenance.</p>
 
-          <div class="debug-option">
-            <h3>Zero All Modules</h3>
-            <p>
-              Sends the ZERO command to all configured modules and moves each one
-              to its hardware zero position.
-            </p>
-            <button on:click={zeroAll} class="zero-button">Run Zero All</button>
-          </div>
+        <div class="debug-option">
+          <h3>Zero All Modules</h3>
+          <p>
+            Sends the ZERO command to all configured modules and moves each one to its hardware zero position.
+          </p>
+          <button on:click={zeroAll} class="zero-button">Run Zero All</button>
+        </div>
 
-          <div class="debug-option">
-            <h3>Zero One Module</h3>
-            <p>
-              Sends the ZERO command to a single module address. Use this to test
-              or calibrate one module without moving the whole display.
-            </p>
-            <div class="debug-controls">
-              <input
-                type="number"
-                min="0"
-                max="255"
-                bind:value={zeroAddress}
-                placeholder="Module address"
-              />
-              <button on:click={zeroModule} class="zero-button">Run Zero</button>
-            </div>
-          </div>
-
-          <div class="debug-option">
-            <h3>Step One Module</h3>
-            <p>
-              Sends the STEP command to one module address and advances the flap
-              by one blade.
-            </p>
-            <div class="debug-controls">
-              <input
-                type="number"
-                min="0"
-                max="255"
-                bind:value={stepAddress}
-                placeholder="Module address"
-              />
-              <button on:click={stepModule}>Run Step</button>
-            </div>
-            {#if stepResult}
-              <p class="debug-result">
-                Stepped module {stepResult.addr}
-              </p>
-            {/if}
-          </div>
-
-          <div class="debug-option">
-            <h3>Read Module Type</h3>
-            <p>
-              Sends the TYPE read command to one module and shows the returned
-              module type in this page.
-            </p>
-            <div class="debug-controls">
-              <input
-                type="number"
-                min="0"
-                max="255"
-                bind:value={typeAddress}
-                placeholder="Module address"
-              />
-              <button on:click={getModuleType}>Read Type</button>
-            </div>
-            {#if typeResult}
-              <p class="debug-result">
-                Module {typeResult.addr}: {typeResult.typeName} ({typeResult.typeHex})
-              </p>
-            {/if}
-          </div>
-
-          <div class="debug-option">
-            <h3>Change Module Address</h3>
-            <p>
-              Changes the RS485 address of a module. Useful when reconfiguring
-              the board or replacing modules.
-            </p>
-            <div class="debug-controls">
-              <input
-                type="number"
-                min="1"
-                max="255"
-                bind:value={oldAddrChange}
-                placeholder="Old address"
-              />
-              <input
-                type="number"
-                min="1"
-                max="255"
-                bind:value={newAddrChange}
-                placeholder="New address"
-              />
-              <button on:click={changeModuleAddr}>Change Address</button>
-            </div>
-            {#if addrResult}
-              <p class="debug-result">
-                Changed module address from {addrResult.oldAddr} to {addrResult.newAddr}
-              </p>
-            {/if}
-          </div>
-
-          <div class="debug-option">
-            <h4>Read Module Address</h4>
-            <p>Reads the RS485 address currently programmed into a module.</p>
-            <div class="debug-controls">
-              <input
-                type="number"
-                min="1"
-                max="255"
-                bind:value={readAddrAddress}
-                placeholder="Module address"
-              />
-              <button on:click={getModuleAddr}>Read Address</button>
-            </div>
-            {#if readAddrResult}
-              <p class="debug-result">
-                {#if readAddrResult.error}
-                  Error: {readAddrResult.error}
-                {:else if readAddrResult.success}
-                  Module {readAddrResult.addr} is at address <strong>{readAddrResult.currentAddr}</strong>
-                {:else}
-                  Failed to read module address
-                {/if}
-              </p>
-            {/if}
+        <div class="debug-option">
+          <h3>Zero One Module</h3>
+          <p>Sends the ZERO command to a single module address.</p>
+          <div class="debug-controls">
+            <input type="number" min="0" max="255" bind:value={zeroAddress} placeholder="Module address" />
+            <button on:click={zeroModule} class="zero-button">Run Zero</button>
           </div>
         </div>
-      {/if}
+
+        <div class="debug-option">
+          <h3>Step One Module</h3>
+          <p>Sends the STEP command to one module address and advances the flap by one blade.</p>
+          <div class="debug-controls">
+            <input type="number" min="0" max="255" bind:value={stepAddress} placeholder="Module address" />
+            <button on:click={stepModule}>Run Step</button>
+          </div>
+          {#if stepResult}
+            <p class="debug-result">Stepped module {stepResult.addr}</p>
+          {/if}
+        </div>
+
+        <div class="debug-option">
+          <h3>Read Module Type</h3>
+          <p>Sends the TYPE read command to one module and shows the returned module type in this page.</p>
+          <div class="debug-controls">
+            <input type="number" min="0" max="255" bind:value={typeAddress} placeholder="Module address" />
+            <button on:click={getModuleType}>Read Type</button>
+          </div>
+          {#if typeResult}
+            <p class="debug-result">Module {typeResult.addr}: {typeResult.typeName} ({typeResult.typeHex})</p>
+          {/if}
+        </div>
+
+        <div class="debug-option">
+          <h3>Change Module Address</h3>
+          <p>Changes the RS485 address of a module. Useful when reconfiguring the board or replacing modules.</p>
+          <div class="debug-controls">
+            <input type="number" min="1" max="255" bind:value={oldAddrChange} placeholder="Old address" />
+            <input type="number" min="1" max="255" bind:value={newAddrChange} placeholder="New address" />
+            <button on:click={changeModuleAddr}>Change Address</button>
+          </div>
+          {#if addrResult}
+            <p class="debug-result">Changed module address from {addrResult.oldAddr} to {addrResult.newAddr}</p>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </div>
+
   <footer>{$wiStrings["copyright"]} &bull; {$wiVersion}</footer>
 </main>
 
@@ -510,7 +607,8 @@
   }
 
   .save-line button,
-  .debug-block button {
+  .debug-block button,
+  .mirror-block button {
     margin: 7px 10px;
     padding: 10px 20px;
     border: 0;
@@ -634,7 +732,8 @@
     color: #c62828;
   }
 
-  .debug-block {
+  .debug-block,
+  .mirror-block {
     min-height: 120px;
   }
 
@@ -688,12 +787,66 @@
     font-weight: 600;
   }
 
+  .mirror-row {
+    margin: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .mirror-label {
+    min-width: 180px;
+    color: #2d327d;
+    font-weight: 600;
+  }
+
+  .mirror-row input {
+    padding: 8px 10px;
+    border: 1px solid #bcbcbc;
+    border-radius: 5px;
+    min-width: 220px;
+  }
+
+  .mirror-search-wrap {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .mirror-search-wrap input {
+    flex: 1;
+  }
+
+  .station-results {
+    list-style: none;
+    margin: 6px 0 0 0;
+    padding: 0;
+  }
+
+  .station-result-btn {
+    width: 100%;
+    text-align: left;
+    margin: 2px 0;
+    padding: 8px 10px;
+    border: 1px solid #ccd3eb;
+    background: #f5f6fb;
+    color: #1f245f;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .station-id {
+    color: #666;
+    font-size: 0.85em;
+  }
+
   .debug-block button.zero-button {
     background: #d97627;
   }
 
   .save-line button:hover,
-  .debug-block button:hover {
+  .debug-block button:hover,
+  .mirror-block button:hover {
     opacity: 0.8;
   }
 </style>

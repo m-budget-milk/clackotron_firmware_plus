@@ -12,6 +12,7 @@
 #include "ct_peripherals.h"
 #include "ct_module.h"
 #include "ct_rtc.h"
+#include "ct_stationboard.h"
 
 CTWebserver webserver;
 CTWebServerAsync webserverAsync;
@@ -19,6 +20,7 @@ CTPreferences preferences;
 CTPeripherals peripherals;
 CTModule module;
 CTRTC rtc;
+CTStationboard stationboard;
 
 // Boolean flag of whether or not WiFi was available at least once
 bool wifiSetupComplete = false;
@@ -59,13 +61,54 @@ uint8_t lastModuleOutputs[MAX_CONNECTED_MODULES] = {' '};
 // Internal cache for board positions
 uint8_t boardPositions[MAX_CONNECTED_MODULES] = {0};
 bool needsToLoadConfig = true;
+String displayMode = "manual";
+uint32_t randomShuffleIntervalSeconds = 60;
+unsigned long lastRandomShuffleTime = 0;
+
+// Mirror mode state
+struct ModuleMirrorMapping {
+    uint8_t addr;
+    char field[24];
+};
+ModuleMirrorMapping mirrorMappings[MAX_CONNECTED_MODULES];
+int mirrorMappingCount = 0;
+String mirrorStationId = "";
+String mirrorStationQuery = "";
+String mirrorPlatform = "";
+uint32_t mirrorRefreshIntervalSeconds = MIRROR_DEFAULT_REFRESH_SECONDS;
+unsigned long lastMirrorFetchTime = 0;
+bool mirrorEnabled = false;
+bool mirrorDepartureWindowEnabled = false;
+uint32_t mirrorDepartureWindowMinutes = 10;
 
 // Internal cache whether or not WiFi is connected
 bool wifiIsConnected = false;
 
+void randomizeBoardPositions() {
+    int boardCount = preferences.getBoardModuleCount();
+    module.zeroAll(moduleAddresses, MAX_CONNECTED_MODULES);
+
+    int randomized = 0;
+
+    for (int i = 0; i < boardCount; i++) {
+        uint8_t addr = preferences.getBoardModuleAddress(i);
+        int positionCount = preferences.getBoardModulePositionCount(addr);
+        if (positionCount <= 0) continue;
+
+        boardPositions[i] = (uint8_t)random(positionCount);
+        lastModuleOutputs[i] = 0xFF;
+        randomized++;
+    }
+
+    if (randomized > 0) {
+        CTLog::info("main: random mode generated positions for " + String(randomized) + " modules");
+    }
+}
+
 void setup() {
     // Set up serial communication for debugging
     CTLog::setup();
+    randomSeed(micros());
 
     // Set up hardware peripherals
     peripherals.setup();
@@ -188,14 +231,173 @@ void loop() {
         lastLoopTime = currentLoopTime;
 
         if (needsToLoadConfig) {
+            displayMode = preferences.getDisplayMode();
+            randomShuffleIntervalSeconds = preferences.getRandomShuffleIntervalSeconds();
+
             int boardCount = preferences.getBoardModuleCount();
-            for (int i = 0; i < boardCount; i++) {
-                uint8_t addr = preferences.getBoardModuleAddress(i);
-                boardPositions[i] = (uint8_t)preferences.getBoardSavedPosition(addr);
-                lastModuleOutputs[i] = 0xFF; // Force update on next output cycle
+            if (displayMode != "mirror") {
+                for (int i = 0; i < boardCount; i++) {
+                    uint8_t addr = preferences.getBoardModuleAddress(i);
+                    boardPositions[i] = (uint8_t)preferences.getBoardSavedPosition(addr);
+                    lastModuleOutputs[i] = 0xFF; // Force update on next output cycle
+                }
             }
+
+            lastRandomShuffleTime = currentLoopTime;
+
+            if (displayMode == "random") {
+                randomizeBoardPositions();
+            }
+
+            // Load mirror configuration
+            {
+                String mirrorJson = preferences.getMirrorConfig();
+                DynamicJsonDocument mDoc(4096);
+                if (!deserializeJson(mDoc, mirrorJson)) {
+                    mirrorEnabled = mDoc["enabled"] | false;
+                    mirrorStationId    = mDoc["stationId"].as<String>();
+                    mirrorStationQuery = mDoc["stationQuery"].as<String>();
+                    mirrorPlatform     = mDoc["platform"].as<String>();
+                    int interval = mDoc["refreshIntervalSeconds"] | MIRROR_DEFAULT_REFRESH_SECONDS;
+                    if (interval < MIRROR_MIN_REFRESH_SECONDS) interval = MIRROR_MIN_REFRESH_SECONDS;
+                    if (interval > MIRROR_MAX_REFRESH_SECONDS) interval = MIRROR_MAX_REFRESH_SECONDS;
+                    mirrorRefreshIntervalSeconds = (uint32_t)interval;
+
+                    mirrorMappingCount = 0;
+                    if (mDoc.containsKey("mappings")) {
+                        JsonObject mappings = mDoc["mappings"].as<JsonObject>();
+                        for (JsonPair kv : mappings) {
+                            if (mirrorMappingCount >= MAX_CONNECTED_MODULES) break;
+                            mirrorMappings[mirrorMappingCount].addr = (uint8_t)String(kv.key().c_str()).toInt();
+                            strncpy(mirrorMappings[mirrorMappingCount].field, kv.value().as<const char*>(), 23);
+                            mirrorMappings[mirrorMappingCount].field[23] = '\0';
+                            mirrorMappingCount++;
+                        }
+                    }
+
+                    mirrorDepartureWindowEnabled = mDoc["departureWindowEnabled"] | false;
+                    int windowMinutes = mDoc["departureWindowMinutes"] | 10;
+                    if (windowMinutes < 1) windowMinutes = 1;
+                    mirrorDepartureWindowMinutes = (uint32_t)windowMinutes;
+
+                    // Force an immediate fetch after mirror settings are reloaded.
+                    lastMirrorFetchTime = 0;
+                    CTLog::info("main: loaded mirror config, enabled=" + String(mirrorEnabled) + " mappings=" + String(mirrorMappingCount));
+                }
+            }
+
             CTLog::info("main: loaded board positions");
             needsToLoadConfig = false;
+        }
+
+        if (displayMode == "random") {
+            unsigned long intervalMs = randomShuffleIntervalSeconds * 1000UL;
+            if (currentLoopTime - lastRandomShuffleTime >= intervalMs) {
+                randomizeBoardPositions();
+                lastRandomShuffleTime = currentLoopTime;
+            }
+        }
+
+        // Mirror mode: periodically fetch stationboard and update mapped modules
+        if (displayMode == "mirror" && mirrorEnabled && wifiIsConnected) {
+            unsigned long mirrorIntervalMs = mirrorRefreshIntervalSeconds * 1000UL;
+            if (mirrorMappingCount > 0 &&
+                (lastMirrorFetchTime == 0 || currentLoopTime - lastMirrorFetchTime >= mirrorIntervalMs)) {
+
+                lastMirrorFetchTime = currentLoopTime;
+                StationboardEntry entry = stationboard.fetchNextDeparture(
+                    mirrorStationId, mirrorStationQuery, mirrorPlatform
+                );
+
+                if (entry.valid) {
+                    // Check if departure is within the configured window
+                    bool withinWindow = true;
+                    if (mirrorDepartureWindowEnabled) {
+                        int nowMinutes = hour() * 60 + minute();
+                        int depMinutes = entry.departureHour.toInt() * 60 + entry.departureMinute.toInt();
+                        int diff = depMinutes - nowMinutes;
+                        if (diff < 0) diff += 24 * 60; // handle midnight wraparound
+                        withinWindow = (diff <= (int)mirrorDepartureWindowMinutes);
+                        CTLog::debug("mirror: window check diff=" + String(diff) + "min limit=" + String(mirrorDepartureWindowMinutes) + " within=" + String(withinWindow));
+                    }
+
+                    if (!withinWindow) {
+                        // No departure within window — reset all mapped modules to default position
+                        int boardCount = preferences.getBoardModuleCount();
+                        for (int m = 0; m < mirrorMappingCount; m++) {
+                            uint8_t addr = mirrorMappings[m].addr;
+                            for (int i = 0; i < boardCount; i++) {
+                                if (preferences.getBoardModuleAddress(i) != addr) continue;
+                                boardPositions[i] = (uint8_t)preferences.getBoardDefaultPosition(addr);
+                                lastModuleOutputs[i] = 0xFF;
+                                break;
+                            }
+                        }
+                        CTLog::info("mirror: departure outside window, reset to default positions");
+                    } else {
+
+                    int boardCount = preferences.getBoardModuleCount();
+                    for (int m = 0; m < mirrorMappingCount; m++) {
+                        uint8_t addr = mirrorMappings[m].addr;
+                        String fieldKey = String(mirrorMappings[m].field);
+
+                        if (fieldKey == MIRROR_FIELD_NONE) continue;
+
+                        // Resolve field value from entry
+                        String value;
+                        if      (fieldKey == MIRROR_FIELD_DESTINATION) {
+                            String transformedDest = preferences.resolveMirrorDestinationOverride(entry.destination);
+                            value = transformedDest.length() > 0 ? transformedDest : entry.destination;
+                            CTLog::debug(
+                                "mirror: destination=" + entry.destination +
+                                " transformed=" + transformedDest +
+                                " selected=" + value
+                            );
+                        }
+                        else if (fieldKey == MIRROR_FIELD_DEPARTURE_HOUR)   value = entry.departureHour;
+                        else if (fieldKey == MIRROR_FIELD_DEPARTURE_MINUTE) value = entry.departureMinute;
+                        else if (fieldKey == MIRROR_FIELD_CATEGORY) {
+                            String transformed = preferences.resolveMirrorTransformedValue(entry.category, entry.operatorCode);
+                            value = transformed.length() > 0 ? transformed : entry.category;
+                            CTLog::debug(
+                                "mirror: category=" + entry.category +
+                                " operator=" + entry.operatorCode +
+                                " transformed=" + transformed +
+                                " selected=" + value
+                            );
+                        }
+                        else if (fieldKey == MIRROR_FIELD_NUMBER)           value = entry.number;
+                        else if (fieldKey == MIRROR_FIELD_DELAY)            value = entry.delay;
+                        else if (fieldKey == MIRROR_FIELD_PLATFORM)         value = entry.platform;
+
+                        // Find position index in the module's positions array
+                        if (value.isEmpty()) continue;
+
+                        // Locate module index in boardPositions array
+                        for (int i = 0; i < boardCount; i++) {
+                            if (preferences.getBoardModuleAddress(i) != addr) continue;
+
+                            int posIdx = preferences.findBoardPositionByLabel(addr, value);
+                            CTLog::debug(
+                                "mirror: addr=" + String(addr) +
+                                " field=" + fieldKey +
+                                " value=" + value +
+                                " pos=" + String(posIdx)
+                            );
+                            if (posIdx >= 0) {
+                                boardPositions[i] = (uint8_t)posIdx;
+                                lastModuleOutputs[i] = 0xFF; // force write
+                            } else {
+                                // No match found, reset to position 0
+                                boardPositions[i] = 0;
+                                lastModuleOutputs[i] = 0xFF; // force write
+                            }
+                            break;
+                        }
+                    }
+                    } // end withinWindow
+                }
+            }
         }
 
 

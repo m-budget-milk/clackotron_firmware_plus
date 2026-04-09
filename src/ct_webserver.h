@@ -38,7 +38,9 @@ class CTWebserver {
         void createStepRoute();
         void createTypeRoute();
         void createAddrRoute();
-        void createReadAddrRoute();
+        void createMirrorConfigGetRoute();
+        void createMirrorConfigSetRoute();
+        void createStationSearchRoute();
 };
 
 #endif // _CLACKOTRON_WEBSERVER_H_

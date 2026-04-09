@@ -97,6 +97,26 @@ bool CTModule::getAddress(uint8_t addr, uint8_t* readAddr) {
         return false;
     }
 
+    // If more bytes arrive for a single-byte address response, the command is
+    // likely answered by multiple modules and is therefore ambiguous.
+    uint8_t extraBytes = 0;
+    unsigned long extraWindowStart = millis();
+    while ((millis() - extraWindowStart) < 15) {
+        while (this->rs485->available() > 0) {
+            this->rs485->read();
+            extraBytes++;
+        }
+        delay(1);
+    }
+
+    if (extraBytes > 0) {
+        CTLog::error(
+            "module: ambiguous address response for " + String(addr, HEX) +
+            " (extra bytes=" + String(extraBytes) + ")"
+        );
+        return false;
+    }
+
     *readAddr = (uint8_t)response;
     CTLog::info("module: module " + String(addr, HEX) + " address = " + String(*readAddr, HEX));
     return true;

@@ -28,11 +28,13 @@
 #define TIMEZONE_CONFIG_FILE_PATH "/config/timezone.json"
 #define WEBINTERFACE_CONFIG_FILE_PATH "/config/webinterface.json"
 #define BOARD_MODULES_CONFIG_FILE_PATH "/config/board_modules.json"
+#define MIRROR_TRANSFORM_CONFIG_FILE_PATH "/config/mirror-transformations.json"
 
 #define MODULE_CONFIG_BKP_PATH "/config/modules.json.bkp"
 #define TIMEZONE_CONFIG_BKP_PATH "/config/timezone.json.bkp"
 #define WEBINTERFACE_CONFIG_BKP_PATH "/config/webinterface.json.bkp"
 #define BOARD_MODULES_CONFIG_BKP_PATH "/config/board_modules.json.bkp"
+#define MIRROR_TRANSFORM_CONFIG_BKP_PATH "/config/mirror-transformations.json.bkp"
 
 // Configuration of the WiFi manager
 #define WIFI_CONNECT_TIMEOUT 15 // s
@@ -76,3 +78,12 @@
 
 // The brightness of the mode LED 0 - 255
 #define LED_BRIGHTNESS 30
+
+// Stationboard mirror feature
+#define MIRROR_CONFIG_FILE_PATH "/config/mirror.json"
+#define MIRROR_CONFIG_BKP_PATH "/config/mirror.json.bkp"
+#define STATIONBOARD_API_BASE "https://transport.opendata.ch/v1"
+#define STATIONBOARD_HTTP_TIMEOUT_MS 8000
+#define MIRROR_MIN_REFRESH_SECONDS 10
+#define MIRROR_MAX_REFRESH_SECONDS 3600
+#define MIRROR_DEFAULT_REFRESH_SECONDS 30

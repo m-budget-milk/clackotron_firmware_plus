@@ -104,8 +104,59 @@ class CTPreferences {
     /// @return JSON string e.g. {"modulePositions":{"7":14}}
     String getBoardPositionsJson();
 
+    /// @brief Get current runtime board mode
+    /// @return "manual" or "random"
+    String getDisplayMode();
+
+    /// @brief Persist runtime board mode
+    /// @param mode - "manual" or "random"
+    void setDisplayMode(String mode);
+
+    /// @brief Get random reshuffle interval in seconds
+    /// @return Interval in range 1..86400
+    uint32_t getRandomShuffleIntervalSeconds();
+
+    /// @brief Persist random reshuffle interval
+    /// @param seconds - Interval in range 1..86400
+    void setRandomShuffleIntervalSeconds(uint32_t seconds);
+
+    /// @brief Get number of available positions for a board module
+    /// @param addr - RS485 address
+    /// @return Number of positions for the module or 0 if unknown
+    int getBoardModulePositionCount(uint8_t addr);
+
+      /// @brief Find the best-matching position index for a value string by
+      ///        scanning the module's position labels. Tries exact, then prefix
+      ///        matches in both directions (see findPositionByLabel in
+      ///        ct_stationboard.h for the matching algorithm).
+      /// @param addr  - RS485 address of the module
+      /// @param value - String to match against labels
+      /// @return position index >= 0 on match, -1 if not found
+      int findBoardPositionByLabel(uint8_t addr, const String& value);
+
     /// @brief Clear all preferences
     void clear();
+
+    /// @brief Get the mirror configuration as JSON string
+    /// @return JSON string with mirror config (defaults when not set)
+    String getMirrorConfig();
+
+    /// @brief Persist a new mirror configuration
+    /// @param json - JSON string with mirror config fields
+    void setMirrorConfig(String json);
+
+    /// @brief Resolve optional stationboard transformations, e.g.
+    ///        category=B + operator=PAG -> Postauto.
+    /// @param category - stationboard category value
+    /// @param operatorCode - stationboard operator value
+    /// @return transformed display value, or empty string when no rule matches
+    String resolveMirrorTransformedValue(const String& category, const String& operatorCode);
+
+    /// @brief Resolve optional destination override transformations, e.g.
+    ///        to="Wil SG" -> "Goeschenen".
+    /// @param toValue - stationboard destination value from "to"
+    /// @return transformed destination, or empty string when no rule matches
+    String resolveMirrorDestinationOverride(const String& toValue);
 
   private:
     Preferences preferences;
